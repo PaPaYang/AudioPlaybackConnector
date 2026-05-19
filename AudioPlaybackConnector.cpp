@@ -478,4 +478,5 @@ void UpdateNotifyIcon()
 	}
 }
 
+
 }
