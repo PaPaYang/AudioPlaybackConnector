@@ -188,9 +188,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		}
 		break;
 
-	// [추가된 부분] 전원 상태 변경 감지 이벤트
 	case WM_POWERBROADCAST:
-		// 절전 모드 진입 시: 현재 연결된 기기 기억
 		if (wParam == PBT_APMSUSPEND) 
 		{
 			g_lastDevices.clear();
@@ -199,19 +197,17 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 				g_lastDevices.push_back(std::wstring(connection.first));
 			}
 		}
-		// 절전 모드 복귀 시: 블루투스 활성화를 기다리기 위해 3초 대기 타이머 실행
 		else if (wParam == PBT_APMRESUMEAUTOMATIC || wParam == PBT_APMRESUMESUSPEND)
 		{
 			SetTimer(hWnd, 9999, 3000, nullptr);
 		}
 		break;
 
-	// [추가된 부분] 타이머 이벤트 처리
 	case WM_TIMER:
 		if (wParam == 9999) 
 		{
-			KillTimer(hWnd, 9999); // 타이머 종료
-			PostMessageW(hWnd, WM_CONNECTDEVICE, 0, 0); // 저장해둔 기기로 재연결 시도
+			KillTimer(hWnd, 9999); 
+			PostMessageW(hWnd, WM_CONNECTDEVICE, 0, 0); 
 		}
 		break;
 
@@ -257,7 +253,6 @@ void SetupFlyout()
 
 void SetupMenu()
 {
-	// https://docs.microsoft.com/en-us/windows/uwp/design/style/segoe-ui-symbol-font
 	FontIcon settingsIcon;
 	settingsIcon.Glyph(L"\xE713");
 
@@ -476,7 +471,4 @@ void UpdateNotifyIcon()
 			LOG_LAST_ERROR();
 		}
 	}
-}
-
-
 }
