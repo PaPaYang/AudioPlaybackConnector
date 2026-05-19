@@ -187,6 +187,34 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 			g_lastDevices.clear();
 		}
 		break;
+
+	// [추가된 부분] 전원 상태 변경 감지 이벤트
+	case WM_POWERBROADCAST:
+		// 절전 모드 진입 시: 현재 연결된 기기 기억
+		if (wParam == PBT_APMSUSPEND) 
+		{
+			g_lastDevices.clear();
+			for (const auto& connection : g_audioPlaybackConnections)
+			{
+				g_lastDevices.push_back(std::wstring(connection.first));
+			}
+		}
+		// 절전 모드 복귀 시: 블루투스 활성화를 기다리기 위해 3초 대기 타이머 실행
+		else if (wParam == PBT_APMRESUMEAUTOMATIC || wParam == PBT_APMRESUMESUSPEND)
+		{
+			SetTimer(hWnd, 9999, 3000, nullptr);
+		}
+		break;
+
+	// [추가된 부분] 타이머 이벤트 처리
+	case WM_TIMER:
+		if (wParam == 9999) 
+		{
+			KillTimer(hWnd, 9999); // 타이머 종료
+			PostMessageW(hWnd, WM_CONNECTDEVICE, 0, 0); // 저장해둔 기기로 재연결 시도
+		}
+		break;
+
 	default:
 		if (WM_TASKBAR_CREATED && message == WM_TASKBAR_CREATED)
 		{
@@ -448,4 +476,6 @@ void UpdateNotifyIcon()
 			LOG_LAST_ERROR();
 		}
 	}
+}
+
 }
