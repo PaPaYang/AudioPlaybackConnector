@@ -199,7 +199,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		}
 		else if (wParam == PBT_APMRESUMEAUTOMATIC || wParam == PBT_APMRESUMESUSPEND)
 		{
-			SetTimer(hWnd, 9999, 3000, nullptr);
+			SetTimer(hWnd, 9999, 1500, nullptr);
 		}
 		break;
 
