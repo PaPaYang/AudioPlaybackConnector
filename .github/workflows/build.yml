@@ -13,6 +13,14 @@ jobs:
     - name: Add MSBuild to PATH
       uses: microsoft/setup-msbuild@v2
 
+    # [추가된 부분 1] NuGet(패키지 관리자) 도구 설치
+    - name: Setup NuGet
+      uses: nuget/setup-nuget@v2
+
+    # [추가된 부분 2] 빌드하기 전에 필요한 외부 패키지 다운로드
+    - name: Restore NuGet Packages
+      run: nuget restore AudioPlaybackConnector.sln
+
     - name: Build the solution
       run: msbuild AudioPlaybackConnector.sln /p:Configuration=Release /p:Platform=x64
 
