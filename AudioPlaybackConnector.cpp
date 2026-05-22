@@ -1,5 +1,10 @@
 #include "pch.h"
 #include "AudioPlaybackConnector.h"
+#include <Dbt.h>
+#include <initguid.h>
+
+// [추가됨] 블루투스 어댑터 전원 상태를 감지하기 위한 고유 식별자(GUID)
+DEFINE_GUID(GUID_BTHPORT_DEVICE_INTERFACE, 0x0850302a, 0xb344, 0x4fda, 0x9b, 0xe9, 0x90, 0x57, 0x6b, 0x8d, 0x46, 0xf0);
 
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 void SetupFlyout();
@@ -53,10 +58,16 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
 	RegisterClassExW(&wcex);
 
-	// When parent window size is 0x0 or invisible, the dpi scale of menu is incorrect. Here we set window size to 1x1 and use WS_EX_LAYERED to make window looks like invisible.
 	g_hWnd = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_LAYERED | WS_EX_TOPMOST, L"AudioPlaybackConnector", nullptr, WS_POPUP, 0, 0, 0, 0, nullptr, nullptr, hInstance, nullptr);
 	FAIL_FAST_LAST_ERROR_IF_NULL(g_hWnd);
 	FAIL_FAST_IF_WIN32_BOOL_FALSE(SetLayeredWindowAttributes(g_hWnd, 0, 0, LWA_ALPHA));
+
+	// [추가됨] 윈도우에게 "블루투스가 켜지거나 꺼지면 나한테 알려줘!" 라고 등록하는 과정
+	DEV_BROADCAST_DEVICEINTERFACE_W filter = { 0 };
+	filter.dbcc_size = sizeof(filter);
+	filter.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
+	filter.dbcc_classguid = GUID_BTHPORT_DEVICE_INTERFACE;
+	RegisterDeviceNotificationW(g_hWnd, &filter, DEVICE_NOTIFY_WINDOW_HANDLE);
 
 	DesktopWindowXamlSource desktopSource;
 	auto desktopSourceNative2 = desktopSource.as<IDesktopWindowXamlSourceNative2>();
@@ -154,7 +165,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 			g_devicePicker.Show(rect, Placement::Above);
 		}
 		break;
-		case WM_RBUTTONUP: // Menu activated by mouse click
+		case WM_RBUTTONUP: 
 			g_menuFocusState = FocusState::Pointer;
 			break;
 		case WM_CONTEXTMENU:
@@ -188,6 +199,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		}
 		break;
 
+	// [기존] 절전 모드 감지 이벤트
 	case WM_POWERBROADCAST:
 		if (wParam == PBT_APMSUSPEND) 
 		{
@@ -199,7 +211,23 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		}
 		else if (wParam == PBT_APMRESUMEAUTOMATIC || wParam == PBT_APMRESUMESUSPEND)
 		{
-			SetTimer(hWnd, 9999, 10000, nullptr);
+			SetTimer(hWnd, 9999, 10000, nullptr); // 10초 뒤에 연결 시도
+		}
+		break;
+
+	// [추가됨] 장치 상태 변경(블루투스 On/Off) 감지 이벤트
+	case WM_DEVICECHANGE:
+		if (wParam == DBT_DEVICEREMOVECOMPLETE) // 블루투스가 꺼졌을 때
+		{
+			g_lastDevices.clear();
+			for (const auto& connection : g_audioPlaybackConnections)
+			{
+				g_lastDevices.push_back(std::wstring(connection.first));
+			}
+		}
+		else if (wParam == DBT_DEVICEARRIVAL) // 블루투스가 다시 켜졌을 때
+		{
+			SetTimer(hWnd, 9999, 10000, nullptr); // 10초 뒤에 연결 시도
 		}
 		break;
 
