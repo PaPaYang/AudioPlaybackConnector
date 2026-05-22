@@ -3,7 +3,7 @@
 #include <Dbt.h>
 #include <initguid.h>
 
-// [추가됨] 블루투스 어댑터 전원 상태를 감지하기 위한 고유 식별자(GUID)
+// 블루투스 어댑터 전원 상태를 감지하기 위한 고유 식별자(GUID) 추가
 DEFINE_GUID(GUID_BTHPORT_DEVICE_INTERFACE, 0x0850302a, 0xb344, 0x4fda, 0x9b, 0xe9, 0x90, 0x57, 0x6b, 0x8d, 0x46, 0xf0);
 
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
@@ -62,7 +62,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	FAIL_FAST_LAST_ERROR_IF_NULL(g_hWnd);
 	FAIL_FAST_IF_WIN32_BOOL_FALSE(SetLayeredWindowAttributes(g_hWnd, 0, 0, LWA_ALPHA));
 
-	// [추가됨] 윈도우에게 "블루투스가 켜지거나 꺼지면 나한테 알려줘!" 라고 등록하는 과정
+	// 윈도우에게 "블루투스가 켜지거나 꺼지면 즉시 나한테 알려줘!" 라고 알림 등록
 	DEV_BROADCAST_DEVICEINTERFACE_W filter = { 0 };
 	filter.dbcc_size = sizeof(filter);
 	filter.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
@@ -193,41 +193,28 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		{
 			for (const auto& i : g_lastDevices)
 			{
-				ConnectDevice(g_devicePicker, i);
+				// 이미 연결된 상태가 아닐 때만 연결 시도
+				if (g_audioPlaybackConnections.find(i) == g_audioPlaybackConnections.end())
+				{
+					ConnectDevice(g_devicePicker, i);
+				}
 			}
-			g_lastDevices.clear();
 		}
 		break;
 
-	// [기존] 절전 모드 감지 이벤트
 	case WM_POWERBROADCAST:
-		if (wParam == PBT_APMSUSPEND) 
+		// 절전 모드에서 깨어날 때
+		if (wParam == PBT_APMRESUMEAUTOMATIC || wParam == PBT_APMRESUMESUSPEND)
 		{
-			g_lastDevices.clear();
-			for (const auto& connection : g_audioPlaybackConnections)
-			{
-				g_lastDevices.push_back(std::wstring(connection.first));
-			}
-		}
-		else if (wParam == PBT_APMRESUMEAUTOMATIC || wParam == PBT_APMRESUMESUSPEND)
-		{
-			SetTimer(hWnd, 9999, 10000, nullptr); // 10초 뒤에 연결 시도
+			SetTimer(hWnd, 9999, 10000, nullptr); // 10초 대기 후 재연결
 		}
 		break;
 
-	// [추가됨] 장치 상태 변경(블루투스 On/Off) 감지 이벤트
 	case WM_DEVICECHANGE:
-		if (wParam == DBT_DEVICEREMOVECOMPLETE) // 블루투스가 꺼졌을 때
+		// 윈도우 블루투스 스위치를 다시 켰을 때 감지 (DBT_DEVICEARRIVAL)
+		if (wParam == DBT_DEVICEARRIVAL) 
 		{
-			g_lastDevices.clear();
-			for (const auto& connection : g_audioPlaybackConnections)
-			{
-				g_lastDevices.push_back(std::wstring(connection.first));
-			}
-		}
-		else if (wParam == DBT_DEVICEARRIVAL) // 블루투스가 다시 켜졌을 때
-		{
-			SetTimer(hWnd, 9999, 10000, nullptr); // 10초 뒤에 연결 시도
+			SetTimer(hWnd, 9999, 10000, nullptr); // 블루투스 준비시간 10초 대기 후 재연결
 		}
 		break;
 
@@ -273,230 +260,4 @@ void SetupFlyout()
 	stackPanel.Children().Append(button);
 
 	Flyout flyout;
-	flyout.ShouldConstrainToRootBounds(false);
-	flyout.Content(stackPanel);
-
-	g_xamlFlyout = flyout;
-}
-
-void SetupMenu()
-{
-	FontIcon settingsIcon;
-	settingsIcon.Glyph(L"\xE713");
-
-	MenuFlyoutItem settingsItem;
-	settingsItem.Text(_(L"Bluetooth Settings"));
-	settingsItem.Icon(settingsIcon);
-	settingsItem.Click([](const auto&, const auto&) {
-		winrt::Windows::System::Launcher::LaunchUriAsync(Uri(L"ms-settings:bluetooth"));
-	});
-
-	FontIcon closeIcon;
-	closeIcon.Glyph(L"\xE8BB");
-
-	MenuFlyoutItem exitItem;
-	exitItem.Text(_(L"Exit"));
-	exitItem.Icon(closeIcon);
-	exitItem.Click([](const auto&, const auto&) {
-		if (g_audioPlaybackConnections.size() == 0)
-		{
-			PostMessageW(g_hWnd, WM_CLOSE, 0, 0);
-			return;
-		}
-
-		RECT iconRect;
-		auto hr = Shell_NotifyIconGetRect(&g_niid, &iconRect);
-		if (FAILED(hr))
-		{
-			LOG_HR(hr);
-			return;
-		}
-
-		auto dpi = GetDpiForWindow(g_hWnd);
-
-		SetWindowPos(g_hWnd, HWND_TOPMOST, iconRect.left, iconRect.top, 0, 0, SWP_HIDEWINDOW);
-		g_xamlCanvas.Width(static_cast<float>((iconRect.right - iconRect.left) * USER_DEFAULT_SCREEN_DPI / dpi));
-		g_xamlCanvas.Height(static_cast<float>((iconRect.bottom - iconRect.top) * USER_DEFAULT_SCREEN_DPI / dpi));
-
-		g_xamlFlyout.ShowAt(g_xamlCanvas);
-	});
-
-	MenuFlyout menu;
-	menu.Items().Append(settingsItem);
-	menu.Items().Append(exitItem);
-	menu.Opened([](const auto& sender, const auto&) {
-		auto menuItems = sender.as<MenuFlyout>().Items();
-		auto itemsCount = menuItems.Size();
-		if (itemsCount > 0)
-		{
-			menuItems.GetAt(itemsCount - 1).Focus(g_menuFocusState);
-		}
-		g_menuFocusState = FocusState::Unfocused;
-	});
-	menu.Closed([](const auto&, const auto&) {
-		ShowWindow(g_hWnd, SW_HIDE);
-	});
-
-	g_xamlMenu = menu;
-}
-
-winrt::fire_and_forget ConnectDevice(DevicePicker picker, DeviceInformation device)
-{
-	picker.SetDisplayStatus(device, _(L"Connecting"), DevicePickerDisplayStatusOptions::ShowProgress | DevicePickerDisplayStatusOptions::ShowDisconnectButton);
-
-	bool success = false;
-	std::wstring errorMessage;
-
-	try
-	{
-		auto connection = AudioPlaybackConnection::TryCreateFromId(device.Id());
-		if (connection)
-		{
-			g_audioPlaybackConnections.emplace(device.Id(), std::pair(device, connection));
-
-			connection.StateChanged([](const auto& sender, const auto&) {
-				if (sender.State() == AudioPlaybackConnectionState::Closed)
-				{
-					auto it = g_audioPlaybackConnections.find(std::wstring(sender.DeviceId()));
-					if (it != g_audioPlaybackConnections.end())
-					{
-						g_devicePicker.SetDisplayStatus(it->second.first, {}, DevicePickerDisplayStatusOptions::None);
-						g_audioPlaybackConnections.erase(it);
-					}
-					sender.Close();
-				}
-			});
-
-			co_await connection.StartAsync();
-			auto result = co_await connection.OpenAsync();
-
-			switch (result.Status())
-			{
-			case AudioPlaybackConnectionOpenResultStatus::Success:
-				success = true;
-				break;
-			case AudioPlaybackConnectionOpenResultStatus::RequestTimedOut:
-				success = false;
-				errorMessage = _(L"The request timed out");
-				break;
-			case AudioPlaybackConnectionOpenResultStatus::DeniedBySystem:
-				success = false;
-				errorMessage = _(L"The operation was denied by the system");
-				break;
-			case AudioPlaybackConnectionOpenResultStatus::UnknownFailure:
-				success = false;
-				winrt::throw_hresult(result.ExtendedError());
-				break;
-			}
-		}
-		else
-		{
-			success = false;
-			errorMessage = _(L"Unknown error");
-		}
-	}
-	catch (winrt::hresult_error const& ex)
-	{
-		success = false;
-		errorMessage.resize(64);
-		while (1)
-		{
-			auto result = swprintf(errorMessage.data(), errorMessage.size(), L"%s (0x%08X)", ex.message().c_str(), static_cast<uint32_t>(ex.code()));
-			if (result < 0)
-			{
-				errorMessage.resize(errorMessage.size() * 2);
-			}
-			else
-			{
-				errorMessage.resize(result);
-				break;
-			}
-		}
-		LOG_CAUGHT_EXCEPTION();
-	}
-
-	if (success)
-	{
-		picker.SetDisplayStatus(device, _(L"Connected"), DevicePickerDisplayStatusOptions::ShowDisconnectButton);
-	}
-	else
-	{
-		auto it = g_audioPlaybackConnections.find(std::wstring(device.Id()));
-		if (it != g_audioPlaybackConnections.end())
-		{
-			it->second.second.Close();
-			g_audioPlaybackConnections.erase(it);
-		}
-		picker.SetDisplayStatus(device, errorMessage, DevicePickerDisplayStatusOptions::ShowRetryButton);
-	}
-}
-
-winrt::fire_and_forget ConnectDevice(DevicePicker picker, std::wstring_view deviceId)
-{
-	auto device = co_await DeviceInformation::CreateFromIdAsync(deviceId);
-	ConnectDevice(picker, device);
-}
-
-void SetupDevicePicker()
-{
-	g_devicePicker = DevicePicker();
-	winrt::check_hresult(g_devicePicker.as<IInitializeWithWindow>()->Initialize(g_hWnd));
-
-	g_devicePicker.Filter().SupportedDeviceSelectors().Append(AudioPlaybackConnection::GetDeviceSelector());
-	g_devicePicker.DevicePickerDismissed([](const auto&, const auto&) {
-		SetWindowPos(g_hWnd, nullptr, 0, 0, 0, 0, SWP_NOZORDER | SWP_HIDEWINDOW);
-	});
-	g_devicePicker.DeviceSelected([](const auto& sender, const auto& args) {
-		ConnectDevice(sender, args.SelectedDevice());
-	});
-	g_devicePicker.DisconnectButtonClicked([](const auto& sender, const auto& args) {
-		auto device = args.Device();
-		auto it = g_audioPlaybackConnections.find(std::wstring(device.Id()));
-		if (it != g_audioPlaybackConnections.end())
-		{
-			it->second.second.Close();
-			g_audioPlaybackConnections.erase(it);
-		}
-		sender.SetDisplayStatus(device, {}, DevicePickerDisplayStatusOptions::None);
-	});
-}
-
-void SetupSvgIcon()
-{
-	auto hRes = FindResourceW(g_hInst, MAKEINTRESOURCEW(1), L"SVG");
-	FAIL_FAST_LAST_ERROR_IF_NULL(hRes);
-
-	auto size = SizeofResource(g_hInst, hRes);
-	FAIL_FAST_LAST_ERROR_IF(size == 0);
-
-	auto hResData = LoadResource(g_hInst, hRes);
-	FAIL_FAST_LAST_ERROR_IF_NULL(hResData);
-
-	auto svgData = reinterpret_cast<const char*>(LockResource(hResData));
-	FAIL_FAST_IF_NULL_ALLOC(svgData);
-
-	const std::string_view svg(svgData, size);
-	const int width = GetSystemMetrics(SM_CXSMICON), height = GetSystemMetrics(SM_CYSMICON);
-
-	g_hIconLight = SvgTohIcon(svg, width, height, { 0, 0, 0, 1 });
-	g_hIconDark = SvgTohIcon(svg, width, height, { 1, 1, 1, 1 });
-}
-
-void UpdateNotifyIcon()
-{
-	DWORD value = 0, cbValue = sizeof(value);
-	LOG_IF_WIN32_ERROR(RegGetValueW(HKEY_CURRENT_USER, LR"(Software\Microsoft\Windows\CurrentVersion\Themes\Personalize)", L"SystemUsesLightTheme", RRF_RT_REG_DWORD, nullptr, &value, &cbValue));
-	g_nid.hIcon = value != 0 ? g_hIconLight : g_hIconDark;
-
-	if (!Shell_NotifyIconW(NIM_MODIFY, &g_nid))
-	{
-		if (Shell_NotifyIconW(NIM_ADD, &g_nid))
-		{
-			FAIL_FAST_IF_WIN32_BOOL_FALSE(Shell_NotifyIconW(NIM_SETVERSION, &g_nid));
-		}
-		else
-		{
-			LOG_LAST_ERROR();
-		}
-	}
-}
+	flyout.ShouldConstrainToRootBounds
