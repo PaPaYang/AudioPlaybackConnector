@@ -203,18 +203,36 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		break;
 
 	case WM_POWERBROADCAST:
-		// 절전 모드에서 깨어날 때
-		if (wParam == PBT_APMRESUMEAUTOMATIC || wParam == PBT_APMRESUMESUSPEND)
+		if (wParam == PBT_APMSUSPEND) 
 		{
-			SetTimer(hWnd, 9999, 10000, nullptr); // 10초 대기 후 재연결
+			// 절전 모드 진입 시: 기존 연결들을 강제로 닫아서 윈도우 자원을 완전히 반환
+			for (const auto& connection : g_audioPlaybackConnections)
+			{
+				g_devicePicker.SetDisplayStatus(connection.second.first, {}, DevicePickerDisplayStatusOptions::None);
+				connection.second.second.Close();
+			}
+			g_audioPlaybackConnections.clear();
+		}
+		else if (wParam == PBT_APMRESUMEAUTOMATIC || wParam == PBT_APMRESUMESUSPEND)
+		{
+			SetTimer(hWnd, 9999, 10000, nullptr); // 복귀 시 10초 대기 후 재연결
 		}
 		break;
 
 	case WM_DEVICECHANGE:
-		// 윈도우 블루투스 스위치를 다시 켰을 때 감지 (DBT_DEVICEARRIVAL)
-		if (wParam == DBT_DEVICEARRIVAL) 
+		if (wParam == DBT_DEVICEREMOVECOMPLETE) 
 		{
-			SetTimer(hWnd, 9999, 10000, nullptr); // 블루투스 준비시간 10초 대기 후 재연결
+			// 블루투스가 꺼졌을 때 감지
+			for (const auto& connection : g_audioPlaybackConnections)
+			{
+				g_devicePicker.SetDisplayStatus(connection.second.first, {}, DevicePickerDisplayStatusOptions::None);
+				connection.second.second.Close();
+			}
+			g_audioPlaybackConnections.clear();
+		}
+		else if (wParam == DBT_DEVICEARRIVAL) 
+		{
+			SetTimer(hWnd, 9999, 4000, nullptr); 
 		}
 		break;
 
