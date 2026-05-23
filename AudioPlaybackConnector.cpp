@@ -1,10 +1,5 @@
 #include "pch.h"
 #include "AudioPlaybackConnector.h"
-#include <Dbt.h>
-#include <initguid.h>
-
-// 블루투스 어댑터 전원 상태를 감지하기 위한 고유 식별자(GUID) 추가
-DEFINE_GUID(GUID_BTHPORT_DEVICE_INTERFACE, 0x0850302a, 0xb344, 0x4fda, 0x9b, 0xe9, 0x90, 0x57, 0x6b, 0x8d, 0x46, 0xf0);
 
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 void SetupFlyout();
@@ -58,16 +53,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 
 	RegisterClassExW(&wcex);
 
+	// When parent window size is 0x0 or invisible, the dpi scale of menu is incorrect. Here we set window size to 1x1 and use WS_EX_LAYERED to make window looks like invisible.
 	g_hWnd = CreateWindowExW(WS_EX_NOACTIVATE | WS_EX_LAYERED | WS_EX_TOPMOST, L"AudioPlaybackConnector", nullptr, WS_POPUP, 0, 0, 0, 0, nullptr, nullptr, hInstance, nullptr);
 	FAIL_FAST_LAST_ERROR_IF_NULL(g_hWnd);
 	FAIL_FAST_IF_WIN32_BOOL_FALSE(SetLayeredWindowAttributes(g_hWnd, 0, 0, LWA_ALPHA));
-
-	// 윈도우에게 "블루투스가 켜지거나 꺼지면 즉시 나한테 알려줘!" 라고 알림 등록
-	DEV_BROADCAST_DEVICEINTERFACE_W filter = { 0 };
-	filter.dbcc_size = sizeof(filter);
-	filter.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
-	filter.dbcc_classguid = GUID_BTHPORT_DEVICE_INTERFACE;
-	RegisterDeviceNotificationW(g_hWnd, &filter, DEVICE_NOTIFY_WINDOW_HANDLE);
 
 	DesktopWindowXamlSource desktopSource;
 	auto desktopSourceNative2 = desktopSource.as<IDesktopWindowXamlSourceNative2>();
@@ -165,7 +154,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 			g_devicePicker.Show(rect, Placement::Above);
 		}
 		break;
-		case WM_RBUTTONUP: 
+		case WM_RBUTTONUP: // Menu activated by mouse click
 			g_menuFocusState = FocusState::Pointer;
 			break;
 		case WM_CONTEXTMENU:
@@ -193,46 +182,24 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		{
 			for (const auto& i : g_lastDevices)
 			{
-				// 이미 연결된 상태가 아닐 때만 연결 시도
-				if (g_audioPlaybackConnections.find(i) == g_audioPlaybackConnections.end())
-				{
-					ConnectDevice(g_devicePicker, i);
-				}
+				ConnectDevice(g_devicePicker, i);
 			}
+			g_lastDevices.clear();
 		}
 		break;
 
 	case WM_POWERBROADCAST:
 		if (wParam == PBT_APMSUSPEND) 
 		{
-			// 절전 모드 진입 시: 기존 연결들을 강제로 닫아서 윈도우 자원을 완전히 반환
+			g_lastDevices.clear();
 			for (const auto& connection : g_audioPlaybackConnections)
 			{
-				g_devicePicker.SetDisplayStatus(connection.second.first, {}, DevicePickerDisplayStatusOptions::None);
-				connection.second.second.Close();
+				g_lastDevices.push_back(std::wstring(connection.first));
 			}
-			g_audioPlaybackConnections.clear();
 		}
 		else if (wParam == PBT_APMRESUMEAUTOMATIC || wParam == PBT_APMRESUMESUSPEND)
 		{
-			SetTimer(hWnd, 9999, 10000, nullptr); // 복귀 시 10초 대기 후 재연결
-		}
-		break;
-
-	case WM_DEVICECHANGE:
-		if (wParam == DBT_DEVICEREMOVECOMPLETE) 
-		{
-			// 블루투스가 꺼졌을 때 감지
-			for (const auto& connection : g_audioPlaybackConnections)
-			{
-				g_devicePicker.SetDisplayStatus(connection.second.first, {}, DevicePickerDisplayStatusOptions::None);
-				connection.second.second.Close();
-			}
-			g_audioPlaybackConnections.clear();
-		}
-		else if (wParam == DBT_DEVICEARRIVAL) 
-		{
-			SetTimer(hWnd, 9999, 4000, nullptr); 
+			SetTimer(hWnd, 9999, 10000, nullptr);
 		}
 		break;
 
@@ -379,14 +346,6 @@ winrt::fire_and_forget ConnectDevice(DevicePicker picker, DeviceInformation devi
 			{
 			case AudioPlaybackConnectionOpenResultStatus::Success:
 				success = true;
-				{
-					// [핵심 변경점] 연결에 성공하면 무조건 '기억할 기기 목록(g_lastDevices)'에 저장!
-					std::wstring devId(device.Id());
-					if (std::find(g_lastDevices.begin(), g_lastDevices.end(), devId) == g_lastDevices.end())
-					{
-						g_lastDevices.push_back(devId);
-					}
-				}
 				break;
 			case AudioPlaybackConnectionOpenResultStatus::RequestTimedOut:
 				success = false;
@@ -464,22 +423,12 @@ void SetupDevicePicker()
 	});
 	g_devicePicker.DisconnectButtonClicked([](const auto& sender, const auto& args) {
 		auto device = args.Device();
-		std::wstring devId(device.Id());
-		
-		auto it = g_audioPlaybackConnections.find(devId);
+		auto it = g_audioPlaybackConnections.find(std::wstring(device.Id()));
 		if (it != g_audioPlaybackConnections.end())
 		{
 			it->second.second.Close();
 			g_audioPlaybackConnections.erase(it);
 		}
-		
-		// [핵심 변경점] 사용자가 직접 '해제(Disconnect)' 버튼을 누를 때만 기억 목록에서 삭제!
-		auto lastIt = std::find(g_lastDevices.begin(), g_lastDevices.end(), devId);
-		if (lastIt != g_lastDevices.end()) 
-		{
-			g_lastDevices.erase(lastIt);
-		}
-		
 		sender.SetDisplayStatus(device, {}, DevicePickerDisplayStatusOptions::None);
 	});
 }
