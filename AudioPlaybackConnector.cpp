@@ -1,4 +1,4 @@
-code = """#include "pch.h"
+#include "pch.h"
 #include "AudioPlaybackConnector.h"
 #include <Dbt.h>
 #include <initguid.h>
@@ -203,7 +203,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		break;
 
 	case WM_POWERBROADCAST:
-		// 절전 모드에서 깨어날 때if (wParam == PBT_APMSUSPEND) 
+		if (wParam == PBT_APMSUSPEND) 
 		{
 			// [수정됨] 절전 모드 진입 시: 기존 연결들을 강제로 닫아서 윈도우 자원을 완전히 반환
 			for (const auto& connection : g_audioPlaybackConnections)
@@ -257,7 +257,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 void SetupFlyout()
 {
 	TextBlock textBlock;
-	textBlock.Text(_(L"All connections will be closed.\\nExit anyway?"));
+	textBlock.Text(_(L"All connections will be closed.\nExit anyway?"));
 	textBlock.Margin({ 0, 0, 0, 12 });
 
 	static CheckBox checkbox;
@@ -287,7 +287,7 @@ void SetupFlyout()
 void SetupMenu()
 {
 	FontIcon settingsIcon;
-	settingsIcon.Glyph(L"\\xE713");
+	settingsIcon.Glyph(L"\xE713");
 
 	MenuFlyoutItem settingsItem;
 	settingsItem.Text(_(L"Bluetooth Settings"));
@@ -297,7 +297,7 @@ void SetupMenu()
 	});
 
 	FontIcon closeIcon;
-	closeIcon.Glyph(L"\\xE8BB");
+	closeIcon.Glyph(L"\xE8BB");
 
 	MenuFlyoutItem exitItem;
 	exitItem.Text(_(L"Exit"));
@@ -523,20 +523,3 @@ void UpdateNotifyIcon()
 		}
 	}
 }
-"""
-lines = code.split('\n')
-print(f"Line 240 is: {lines[239]}")
-
-# Validate braces
-brace_count = 0
-for i, line in enumerate(lines):
-    for char in line:
-        if char == '{':
-            brace_count += 1
-        elif char == '}':
-            brace_count -= 1
-    if brace_count < 0:
-        print(f"Unmatched closing brace at line {i+1}")
-        break
-print(f"Final brace count: {brace_count}")
-
