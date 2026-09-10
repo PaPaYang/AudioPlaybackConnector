@@ -215,7 +215,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		}
 		else if (wParam == PBT_APMRESUMEAUTOMATIC || wParam == PBT_APMRESUMESUSPEND)
 		{
-			SetTimer(hWnd, 9999, 20000, nullptr); // 복귀 시 20초 대기 후 재연결
+			SetTimer(hWnd, 9999, 120000, nullptr); // 복귀 시 120초 대기 후 재연결
 		}
 		break;
 
