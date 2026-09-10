@@ -362,7 +362,7 @@ winrt::fire_and_forget ConnectDevice(DevicePicker picker, DeviceInformation devi
 
 	while (retryCount < maxRetries)
 	{
-		picker.SetDisplayStatus(device, _(L"Connecting... (Retry " + std::to_wstring(retryCount + 1) + L")"), DevicePickerDisplayStatusOptions::ShowProgress | DevicePickerDisplayStatusOptions::ShowDisconnectButton);
+		picker.SetDisplayStatus(device, _((L"Connecting... (Retry " + std::to_wstring(retryCount + 1) + L")").c_str()), DevicePickerDisplayStatusOptions::ShowProgress | DevicePickerDisplayStatusOptions::ShowDisconnectButton);
 
 		try
 		{
