@@ -2,9 +2,13 @@
 #include "AudioPlaybackConnector.h"
 #include <Dbt.h>
 #include <initguid.h>
+#include <set> // 추가됨
 
 // 블루투스 어댑터 전원 상태를 감지하기 위한 고유 식별자(GUID) 추가
 DEFINE_GUID(GUID_BTHPORT_DEVICE_INTERFACE, 0x0850302a, 0xb344, 0x4fda, 0x9b, 0xe9, 0x90, 0x57, 0x6b, 0x8d, 0x46, 0xf0);
+
+// 추가됨: 절전 복귀 시 오디오 버그 해결을 위해 '더블 탭'을 수행할 장치 기록
+std::set<std::wstring> g_wakeUpDevices;
 
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 void SetupFlyout();
@@ -62,7 +66,6 @@ int APIENTRY wWinMain(_In_ HINSTANCE hInstance,
 	FAIL_FAST_LAST_ERROR_IF_NULL(g_hWnd);
 	FAIL_FAST_IF_WIN32_BOOL_FALSE(SetLayeredWindowAttributes(g_hWnd, 0, 0, LWA_ALPHA));
 
-	// 윈도우에게 "블루투스가 켜지거나 꺼지면 즉시 나한테 알려줘!" 라고 알림 등록
 	DEV_BROADCAST_DEVICEINTERFACE_W filter = { 0 };
 	filter.dbcc_size = sizeof(filter);
 	filter.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
@@ -193,7 +196,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		{
 			for (const auto& i : g_lastDevices)
 			{
-				// 이미 연결된 상태가 아닐 때만 연결 시도
 				if (g_audioPlaybackConnections.find(i) == g_audioPlaybackConnections.end())
 				{
 					ConnectDevice(g_devicePicker, i);
@@ -205,7 +207,6 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 	case WM_POWERBROADCAST:
 		if (wParam == PBT_APMSUSPEND) 
 		{
-			// [수정됨] 절전 모드 진입 시: 기존 연결들을 강제로 닫아서 윈도우 자원을 완전히 반환
 			for (const auto& connection : g_audioPlaybackConnections)
 			{
 				g_devicePicker.SetDisplayStatus(connection.second.first, {}, DevicePickerDisplayStatusOptions::None);
@@ -215,14 +216,17 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		}
 		else if (wParam == PBT_APMRESUMEAUTOMATIC || wParam == PBT_APMRESUMESUSPEND)
 		{
-			SetTimer(hWnd, 9999, 120000, nullptr); // 복귀 시 120초 대기 후 재연결
+			// [수정됨] 깰 때 '더블 탭' 방어를 위해 기기 기록
+			for (const auto& dev : g_lastDevices) {
+				g_wakeUpDevices.insert(dev);
+			}
+			SetTimer(hWnd, 9999, 20000, nullptr); 
 		}
 		break;
 
 	case WM_DEVICECHANGE:
 		if (wParam == DBT_DEVICEREMOVECOMPLETE) 
 		{
-			// [수정됨] 블루투스가 꺼졌을 때: 고스트 연결이 남지 않도록 완전히 닫기
 			for (const auto& connection : g_audioPlaybackConnections)
 			{
 				g_devicePicker.SetDisplayStatus(connection.second.first, {}, DevicePickerDisplayStatusOptions::None);
@@ -232,6 +236,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		}
 		else if (wParam == DBT_DEVICEARRIVAL) 
 		{
+			// [수정됨] 블루투스 재시작 시에도 동일하게 '더블 탭' 예약
+			for (const auto& dev : g_lastDevices) {
+				g_wakeUpDevices.insert(dev);
+			}
 			SetTimer(hWnd, 9999, 20000, nullptr); 
 		}
 		break;
@@ -347,99 +355,94 @@ void SetupMenu()
 
 winrt::fire_and_forget ConnectDevice(DevicePicker picker, DeviceInformation device)
 {
-	picker.SetDisplayStatus(device, _(L"Connecting"), DevicePickerDisplayStatusOptions::ShowProgress | DevicePickerDisplayStatusOptions::ShowDisconnectButton);
-
+	int retryCount = 0;
+	const int maxRetries = 10;
 	bool success = false;
 	std::wstring errorMessage;
 
-	try
+	while (retryCount < maxRetries)
 	{
-		auto connection = AudioPlaybackConnection::TryCreateFromId(device.Id());
-		if (connection)
+		picker.SetDisplayStatus(device, _(L"Connecting... (Retry " + std::to_wstring(retryCount + 1) + L")"), DevicePickerDisplayStatusOptions::ShowProgress | DevicePickerDisplayStatusOptions::ShowDisconnectButton);
+
+		try
 		{
-			g_audioPlaybackConnections.emplace(device.Id(), std::pair(device, connection));
+			auto existingIt = g_audioPlaybackConnections.find(std::wstring(device.Id()));
+			if (existingIt != g_audioPlaybackConnections.end()) {
+				existingIt->second.second.Close();
+				g_audioPlaybackConnections.erase(existingIt);
+			}
 
-			connection.StateChanged([](const auto& sender, const auto&) {
-				if (sender.State() == AudioPlaybackConnectionState::Closed)
-				{
-					auto it = g_audioPlaybackConnections.find(std::wstring(sender.DeviceId()));
-					if (it != g_audioPlaybackConnections.end())
-					{
-						g_devicePicker.SetDisplayStatus(it->second.first, {}, DevicePickerDisplayStatusOptions::None);
-						g_audioPlaybackConnections.erase(it);
-					}
-					sender.Close();
-				}
-			});
-
-			co_await connection.StartAsync();
-			auto result = co_await connection.OpenAsync();
-
-			switch (result.Status())
+			auto connection = AudioPlaybackConnection::TryCreateFromId(device.Id());
+			if (connection)
 			{
-			case AudioPlaybackConnectionOpenResultStatus::Success:
-				success = true;
+				g_audioPlaybackConnections.emplace(device.Id(), std::pair(device, connection));
+
+				connection.StateChanged([](const auto& sender, const auto&) {
+					if (sender.State() == AudioPlaybackConnectionState::Closed)
+					{
+						auto it = g_audioPlaybackConnections.find(std::wstring(sender.DeviceId()));
+						if (it != g_audioPlaybackConnections.end())
+						{
+							g_devicePicker.SetDisplayStatus(it->second.first, {}, DevicePickerDisplayStatusOptions::None);
+							g_audioPlaybackConnections.erase(it);
+						}
+						sender.Close();
+					}
+				});
+
+				co_await connection.StartAsync();
+				auto result = co_await connection.OpenAsync();
+
+				if (result.Status() == AudioPlaybackConnectionOpenResultStatus::Success)
 				{
-					// [핵심 변경점] 연결에 성공하면 무조건 '기억할 기기 목록(g_lastDevices)'에 저장!
 					std::wstring devId(device.Id());
+
+					// [핵심 변경점] 첫 연결에 성공하면 즉시 끊고 1.5초 대기 후 루프를 다시 돌려 재연결 유도
+					if (g_wakeUpDevices.find(devId) != g_wakeUpDevices.end())
+					{
+						g_wakeUpDevices.erase(devId);
+						connection.Close(); // 자원 해제
+						g_audioPlaybackConnections.erase(devId);
+						
+						co_await winrt::resume_after(std::chrono::milliseconds(1500));
+						continue; // 다음 재시도 사이클로 강제 이동하여 '더블 탭' 완성
+					}
+
+					success = true;
 					if (std::find(g_lastDevices.begin(), g_lastDevices.end(), devId) == g_lastDevices.end())
 					{
 						g_lastDevices.push_back(devId);
 					}
+					break; // 최종 연결 성공
 				}
-				break;
-			case AudioPlaybackConnectionOpenResultStatus::RequestTimedOut:
-				success = false;
-				errorMessage = _(L"The request timed out");
-				break;
-			case AudioPlaybackConnectionOpenResultStatus::DeniedBySystem:
-				success = false;
-				errorMessage = _(L"The operation was denied by the system");
-				break;
-			case AudioPlaybackConnectionOpenResultStatus::UnknownFailure:
-				success = false;
-				winrt::throw_hresult(result.ExtendedError());
-				break;
+				else
+				{
+					success = false;
+					errorMessage = _(L"Device busy or not ready");
+				}
 			}
 		}
-		else
+		catch (winrt::hresult_error const& ex)
 		{
 			success = false;
-			errorMessage = _(L"Unknown error");
+			errorMessage = ex.message().c_str();
 		}
-	}
-	catch (winrt::hresult_error const& ex)
-	{
-		success = false;
-		errorMessage.resize(64);
-		while (1)
-		{
-			auto result = swprintf(errorMessage.data(), errorMessage.size(), L"%s (0x%08X)", ex.message().c_str(), static_cast<uint32_t>(ex.code()));
-			if (result < 0)
-			{
-				errorMessage.resize(errorMessage.size() * 2);
-			}
-			else
-			{
-				errorMessage.resize(result);
-				break;
-			}
-		}
-		LOG_CAUGHT_EXCEPTION();
-	}
 
-	if (success)
-	{
-		picker.SetDisplayStatus(device, _(L"Connected"), DevicePickerDisplayStatusOptions::ShowDisconnectButton);
-	}
-	else
-	{
 		auto it = g_audioPlaybackConnections.find(std::wstring(device.Id()));
-		if (it != g_audioPlaybackConnections.end())
-		{
+		if (it != g_audioPlaybackConnections.end()) {
 			it->second.second.Close();
 			g_audioPlaybackConnections.erase(it);
 		}
+
+		retryCount++;
+		if (retryCount < maxRetries) {
+			co_await winrt::resume_after(std::chrono::milliseconds(3000)); 
+		}
+	}
+
+	if (success) {
+		picker.SetDisplayStatus(device, _(L"Connected"), DevicePickerDisplayStatusOptions::ShowDisconnectButton);
+	} else {
 		picker.SetDisplayStatus(device, errorMessage, DevicePickerDisplayStatusOptions::ShowRetryButton);
 	}
 }
@@ -473,7 +476,6 @@ void SetupDevicePicker()
 			g_audioPlaybackConnections.erase(it);
 		}
 		
-		// [핵심 변경점] 사용자가 직접 '해제(Disconnect)' 버튼을 누를 때만 기억 목록에서 삭제!
 		auto lastIt = std::find(g_lastDevices.begin(), g_lastDevices.end(), devId);
 		if (lastIt != g_lastDevices.end()) 
 		{
