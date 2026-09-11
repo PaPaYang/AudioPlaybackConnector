@@ -2,12 +2,12 @@
 #include "AudioPlaybackConnector.h"
 #include <Dbt.h>
 #include <initguid.h>
-#include <set> // 추가됨
+#include <set>
 
-// 블루투스 어댑터 전원 상태를 감지하기 위한 고유 식별자(GUID) 추가
+// 블루투스 어댑터 전원 상태를 감지하기 위한 고유 식별자(GUID)
 DEFINE_GUID(GUID_BTHPORT_DEVICE_INTERFACE, 0x0850302a, 0xb344, 0x4fda, 0x9b, 0xe9, 0x90, 0x57, 0x6b, 0x8d, 0x46, 0xf0);
 
-// 추가됨: 절전 복귀 시 오디오 버그 해결을 위해 '더블 탭'을 수행할 장치 기록
+// 절전 복귀 시 오디오 버그 해결을 위해 '더블 탭'을 수행할 장치 기록
 std::set<std::wstring> g_wakeUpDevices;
 
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
@@ -216,10 +216,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		}
 		else if (wParam == PBT_APMRESUMEAUTOMATIC || wParam == PBT_APMRESUMESUSPEND)
 		{
-			// [수정됨] 깰 때 '더블 탭' 방어를 위해 기기 기록
 			for (const auto& dev : g_lastDevices) {
 				g_wakeUpDevices.insert(dev);
 			}
+			// 절전 해제 시 60초 대기
 			SetTimer(hWnd, 9999, 60000, nullptr); 
 		}
 		break;
@@ -236,10 +236,10 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		}
 		else if (wParam == DBT_DEVICEARRIVAL) 
 		{
-			// [수정됨] 블루투스 재시작 시에도 동일하게 '더블 탭' 예약
 			for (const auto& dev : g_lastDevices) {
 				g_wakeUpDevices.insert(dev);
 			}
+			// 장치 켜짐 시 60초 대기
 			SetTimer(hWnd, 9999, 60000, nullptr); 
 		}
 		break;
@@ -362,6 +362,7 @@ winrt::fire_and_forget ConnectDevice(DevicePicker picker, DeviceInformation devi
 
 	while (retryCount < maxRetries)
 	{
+		// C++ 문자열 포인터 변환 에러 해결 (.c_str() 추가)
 		picker.SetDisplayStatus(device, _((L"Connecting... (Retry " + std::to_wstring(retryCount + 1) + L")").c_str()), DevicePickerDisplayStatusOptions::ShowProgress | DevicePickerDisplayStatusOptions::ShowDisconnectButton);
 
 		try
@@ -397,15 +398,15 @@ winrt::fire_and_forget ConnectDevice(DevicePicker picker, DeviceInformation devi
 				{
 					std::wstring devId(device.Id());
 
-					// [핵심 변경점] 첫 연결에 성공하면 즉시 끊고 10.0초 대기 후 루프를 다시 돌려 재연결 유도
 					if (g_wakeUpDevices.find(devId) != g_wakeUpDevices.end())
 					{
 						g_wakeUpDevices.erase(devId);
-						connection.Close(); // 자원 해제
+						connection.Close(); 
 						g_audioPlaybackConnections.erase(devId);
 						
-						co_await winrt::resume_after(std::chrono::milliseconds(10000));
-						continue; // 다음 재시도 사이클로 강제 이동하여 '더블 탭' 완성
+						// 더블 탭 재연결 대기 5초(5000ms)로 수정
+						co_await winrt::resume_after(std::chrono::milliseconds(5000));
+						continue; 
 					}
 
 					success = true;
@@ -413,7 +414,7 @@ winrt::fire_and_forget ConnectDevice(DevicePicker picker, DeviceInformation devi
 					{
 						g_lastDevices.push_back(devId);
 					}
-					break; // 최종 연결 성공
+					break; 
 				}
 				else
 				{
