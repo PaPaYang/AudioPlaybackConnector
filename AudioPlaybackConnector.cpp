@@ -220,7 +220,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 			for (const auto& dev : g_lastDevices) {
 				g_wakeUpDevices.insert(dev);
 			}
-			SetTimer(hWnd, 9999, 20000, nullptr); 
+			SetTimer(hWnd, 9999, 60000, nullptr); 
 		}
 		break;
 
@@ -240,7 +240,7 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 			for (const auto& dev : g_lastDevices) {
 				g_wakeUpDevices.insert(dev);
 			}
-			SetTimer(hWnd, 9999, 20000, nullptr); 
+			SetTimer(hWnd, 9999, 60000, nullptr); 
 		}
 		break;
 
@@ -397,14 +397,14 @@ winrt::fire_and_forget ConnectDevice(DevicePicker picker, DeviceInformation devi
 				{
 					std::wstring devId(device.Id());
 
-					// [핵심 변경점] 첫 연결에 성공하면 즉시 끊고 1.5초 대기 후 루프를 다시 돌려 재연결 유도
+					// [핵심 변경점] 첫 연결에 성공하면 즉시 끊고 10.0초 대기 후 루프를 다시 돌려 재연결 유도
 					if (g_wakeUpDevices.find(devId) != g_wakeUpDevices.end())
 					{
 						g_wakeUpDevices.erase(devId);
 						connection.Close(); // 자원 해제
 						g_audioPlaybackConnections.erase(devId);
 						
-						co_await winrt::resume_after(std::chrono::milliseconds(1500));
+						co_await winrt::resume_after(std::chrono::milliseconds(10000));
 						continue; // 다음 재시도 사이클로 강제 이동하여 '더블 탭' 완성
 					}
 
