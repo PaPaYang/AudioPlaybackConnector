@@ -404,8 +404,8 @@ winrt::fire_and_forget ConnectDevice(DevicePicker picker, DeviceInformation devi
 						connection.Close(); 
 						g_audioPlaybackConnections.erase(devId);
 						
-						// 더블 탭 재연결 대기 5초(5000ms)로 수정
-						co_await winrt::resume_after(std::chrono::milliseconds(5000));
+						// 더블 탭 재연결 대기 60초(60000ms)로 수정
+						co_await winrt::resume_after(std::chrono::milliseconds(60000));
 						continue; 
 					}
 
