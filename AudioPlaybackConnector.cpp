@@ -2,13 +2,13 @@
 #include "AudioPlaybackConnector.h"
 #include <Dbt.h>
 #include <initguid.h>
-#include <set>
+#include <map> // [수정됨] 횟수 추적을 위해 set에서 map으로 변경
 
 // 블루투스 어댑터 전원 상태를 감지하기 위한 고유 식별자(GUID)
 DEFINE_GUID(GUID_BTHPORT_DEVICE_INTERFACE, 0x0850302a, 0xb344, 0x4fda, 0x9b, 0xe9, 0x90, 0x57, 0x6b, 0x8d, 0x46, 0xf0);
 
-// 절전 복귀 시 오디오 버그 해결을 위해 '더블 탭'을 수행할 장치 기록
-std::set<std::wstring> g_wakeUpDevices;
+// [수정됨] 절전 복귀 시 오디오 버그 해결을 위해 '몇 번' 재연결할지 기록
+std::map<std::wstring, int> g_wakeUpDevices;
 
 LRESULT CALLBACK WndProc(HWND, UINT, WPARAM, LPARAM);
 void SetupFlyout();
@@ -217,10 +217,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		else if (wParam == PBT_APMRESUMEAUTOMATIC || wParam == PBT_APMRESUMESUSPEND)
 		{
 			for (const auto& dev : g_lastDevices) {
-				g_wakeUpDevices.insert(dev);
+				g_wakeUpDevices[dev] = 2; // [수정됨] 1분 간격으로 2번 재연결 예약
 			}
-			// 절전 해제 시 60초 대기
-			SetTimer(hWnd, 9999, 60000, nullptr); 
+			SetTimer(hWnd, 9999, 60000, nullptr); // 최초 1분 대기
 		}
 		break;
 
@@ -237,10 +236,9 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 		else if (wParam == DBT_DEVICEARRIVAL) 
 		{
 			for (const auto& dev : g_lastDevices) {
-				g_wakeUpDevices.insert(dev);
+				g_wakeUpDevices[dev] = 2; // [수정됨] 1분 간격으로 2번 재연결 예약
 			}
-			// 장치 켜짐 시 60초 대기
-			SetTimer(hWnd, 9999, 60000, nullptr); 
+			SetTimer(hWnd, 9999, 60000, nullptr); // 최초 1분 대기
 		}
 		break;
 
@@ -356,13 +354,12 @@ void SetupMenu()
 winrt::fire_and_forget ConnectDevice(DevicePicker picker, DeviceInformation device)
 {
 	int retryCount = 0;
-	const int maxRetries = 10;
+	const int maxRetries = 3; // [수정됨] 첫 연결 + 에러 시 2번 재시도 = 총 3번 제한
 	bool success = false;
 	std::wstring errorMessage;
 
 	while (retryCount < maxRetries)
 	{
-		// C++ 문자열 포인터 변환 에러 해결 (.c_str() 추가)
 		picker.SetDisplayStatus(device, _((L"Connecting... (Retry " + std::to_wstring(retryCount + 1) + L")").c_str()), DevicePickerDisplayStatusOptions::ShowProgress | DevicePickerDisplayStatusOptions::ShowDisconnectButton);
 
 		try
@@ -398,15 +395,19 @@ winrt::fire_and_forget ConnectDevice(DevicePicker picker, DeviceInformation devi
 				{
 					std::wstring devId(device.Id());
 
-					if (g_wakeUpDevices.find(devId) != g_wakeUpDevices.end())
+					// [수정됨] 연결 성공 후 2번의 예약된 재연결을 1분 간격으로 수행하여 오디오 픽스
+					if (g_wakeUpDevices.find(devId) != g_wakeUpDevices.end() && g_wakeUpDevices[devId] > 0)
 					{
-						g_wakeUpDevices.erase(devId);
+						g_wakeUpDevices[devId]--; // 남은 재연결 횟수 차감
 						connection.Close(); 
 						g_audioPlaybackConnections.erase(devId);
 						
-						// 더블 탭 재연결 대기 60초(60000ms)로 수정
-						co_await winrt::resume_after(std::chrono::milliseconds(60000));
+						co_await winrt::resume_after(std::chrono::milliseconds(60000)); // 1분 대기 후 다시 시도
 						continue; 
+					}
+					else
+					{
+						g_wakeUpDevices.erase(devId); // 모든 재연결 완료 시 초기화
 					}
 
 					success = true;
@@ -437,7 +438,8 @@ winrt::fire_and_forget ConnectDevice(DevicePicker picker, DeviceInformation devi
 
 		retryCount++;
 		if (retryCount < maxRetries) {
-			co_await winrt::resume_after(std::chrono::milliseconds(3000)); 
+			// [수정됨] 에러로 인한 연결 실패 시에도 똑같이 1분 대기 후 재시도
+			co_await winrt::resume_after(std::chrono::milliseconds(60000)); 
 		}
 	}
 
